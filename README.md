@@ -6,12 +6,12 @@ __主要关注的工程化方向：__
 4. 增加常用模型架构抽象API，如BERT、GPT、T5等...
 5. 增加常用task head，如分类、序列标注、文本生成等...
 
-__tranformers核心抽象：__
+__tranformers核心抽象：__  
 ![transformers包的核心抽象](./utils/img/transformers_abstract.png)
 
-__禹智项目架构：__
+__禹智项目架构：__  
 ![禹智项目架构](./utils/img/yuzhi_architecture.png)
 
-__transformers工作流：__
+__transformers工作流：__  
 ![transformers包的工作流](./utils/img/HuggingFaceWorkflow.png)
 
