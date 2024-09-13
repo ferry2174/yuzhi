@@ -779,10 +779,10 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
                     )
             dtype_orig = cls._set_default_torch_dtype(torch_dtype)
 
-            if is_sharded:
-                loaded_state_dict_keys = sharded_metadata["all_checkpoint_keys"]
-            else:
-                loaded_state_dict_keys = list(state_dict.keys())
+        if is_sharded:
+            loaded_state_dict_keys = sharded_metadata["all_checkpoint_keys"]
+        else:
+            loaded_state_dict_keys = list(state_dict.keys())
 
         config.name_or_path = pretrained_model_name_or_path
 
@@ -827,21 +827,6 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
 
         # Set model in evaluation mode to deactivate DropOut modules by default
         model.eval()
-
-        # If it is a model with generation capabilities, attempt to load the generation config
-        if model.can_generate() and pretrained_model_name_or_path is not None:
-            try:
-                model.generation_config = GenerationConfig.from_pretrained(
-                    pretrained_model_name_or_path,
-                    local_files_only=True,
-                    subfolder=subfolder,
-                    **kwargs,
-                )
-            except OSError:
-                logger.info(
-                    "Generation config file not found, using a generation config created from the model config."
-                )
-                pass
 
         if output_loading_info:
             if loading_info is None:
@@ -898,8 +883,6 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
         dtype=None,
     ):
         is_safetensors = False
-        state_dict_folder = None
-        state_dict_index = None
 
         if device_map is not None and "disk" in device_map.values():
             archive_file = (
@@ -1073,12 +1056,6 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
             mismatched_keys = []
             if not is_safetensors:
                 offload_index = {} if device_map is not None and "disk" in device_map.values() else None
-            if offload_state_dict:
-                state_dict_folder = tempfile.mkdtemp()
-                state_dict_index = {}
-            else:
-                state_dict_folder = None
-                state_dict_index = None
 
             if is_sharded_safetensors:
                 disk_only_shard_files = get_disk_only_shard_files(
@@ -1185,3 +1162,55 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
             )
 
         return model, missing_keys, unexpected_keys, mismatched_keys, offload_index, error_msgs
+
+    def post_init(self):
+        """
+        A method executed at the end of each Transformer model initialization, to execute code that needs the model's
+        modules properly initialized (such as weight initialization).
+        """
+        self.init_weights()
+        # self._backward_compatibility_gradient_checkpointing()
+
+    def init_weights(self):
+        """
+        If needed prunes and maybe initializes weights. If using a custom `PreTrainedModel`, you need to implement any
+        initialization logic in `_init_weights`.
+        """
+        if _init_weights:
+            # Initialize weights
+            self.apply(self._initialize_weights)
+
+            # Tie weights should be skipped when not initializing all weights
+            # since from_pretrained(...) calls tie weights anyways
+            self.tie_weights()
+
+    def _init_weights(self, module):
+        """
+        Initialize the weights. This method should be overridden by derived class and is
+        the only initialization method that will be called when loading a checkpoint
+        using `from_pretrained`. Any attempt to initialize outside of this function
+        will be useless as the torch.nn.init function are all replaced with skip.
+        """
+        pass
+
+    def _initialize_weights(self, module):
+        """
+        Initialize the weights if they are not already initialized.
+        """
+        if getattr(module, "_is_yz_initialized", False):
+            return
+        self._init_weights(module)
+        module._is_yz_initialized = True
+
+
+    def tie_weights(self):
+        """
+        Tie the weights between the input embeddings and the output embeddings.
+
+        If the `torchscript` flag is set in the configuration, can't handle parameter sharing so we are cloning the
+        weights instead.
+        """
+        for module in self.modules():
+            if hasattr(module, "_tie_weights"):
+                module._tie_weights()
+

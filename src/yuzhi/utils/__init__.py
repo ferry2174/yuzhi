@@ -1,4 +1,11 @@
 from .. import __version__
+from .doc import (
+    add_code_sample_docstrings,
+    add_end_docstrings,
+    add_start_docstrings,
+    add_start_docstrings_to_model_forward,
+    replace_return_docstrings,
+)
 from .generic import (
     ContextManagers,
     ExplicitEnum,
@@ -6,6 +13,7 @@ from .generic import (
     TensorType,
     is_numpy_array,
     is_oneflow_tensor,
+    is_tensor,
     is_torch_device,
     is_torch_tensor,
     to_py_obj,
@@ -20,6 +28,7 @@ from .import_utils import (
     USE_TORCH,
     OptionalDependencyNotAvailable,
     _LazyModule,
+    get_torch_version,
     is_bitsandbytes_available,
     is_oneflow_available,
     is_safetensors_available,

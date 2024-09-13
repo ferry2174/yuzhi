@@ -8,28 +8,27 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
+from configuration_intern_vit import InternVisionConfig
 from einops import rearrange
 from timm.models.layers import DropPath
 from torch import nn
-from transformers.activations import ACT2FN
-from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
 
-from .... import PreTrainedModel, logging
-from .configuration_intern_vit import InternVisionConfig
+from yuzhi import PreTrainedModel, logging
+from yuzhi.model import BaseModelOutput, BaseModelOutputWithPooling, activations
 
 
 try:
     try:  # v1
-        from flash_attn.flash_attn_interface import \
-            flash_attn_unpadded_qkvpacked_func
-    except:  # v2
-        from flash_attn.flash_attn_interface import \
-            flash_attn_varlen_qkvpacked_func as flash_attn_unpadded_qkvpacked_func
+        from flash_attn.flash_attn_interface import flash_attn_unpadded_qkvpacked_func
+    except:  # v2  # noqa: E722
+        from flash_attn.flash_attn_interface import (
+            flash_attn_varlen_qkvpacked_func as flash_attn_unpadded_qkvpacked_func,
+        )
 
     from flash_attn.bert_padding import pad_input, unpad_input
 
     has_flash_attn = True
-except:
+except:  # noqa: E722
     print('FlashAttention is not installed.')
     has_flash_attn = False
 
@@ -256,7 +255,7 @@ class InternMLP(nn.Module):
     def __init__(self, config: InternVisionConfig):
         super().__init__()
         self.config = config
-        self.act = ACT2FN[config.hidden_act]
+        self.act = activations.ACT2FN[config.hidden_act]
         self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 

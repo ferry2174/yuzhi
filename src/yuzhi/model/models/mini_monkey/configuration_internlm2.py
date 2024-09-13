@@ -15,7 +15,7 @@
 # limitations under the License.
 """ InternLM2 model configuration"""
 
-from .... import PretrainedConfig, logging
+from yuzhi import PretrainedConfig, logging
 
 
 logger = logging.get_logger(__name__)

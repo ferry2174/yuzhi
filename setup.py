@@ -35,6 +35,9 @@ _deps = [
     "safetensors>=0.4.0",
     "sentencepiece>=0.2.0",
     "tokenizers>=0.11.6",
+    "einops==0.8.0",
+    "timm==0.9.16",
+    "flash-attn==2.5.8",
 ]
 
 deps = {b: a for a, b in (re.findall(r"^(([^!=<>~ ]+)(?:[!=<>~ ].*)?$)", x)[0] for x in _deps)}
@@ -87,6 +90,8 @@ extras["oneflow"] = deps_list("oneflow", "nvidia-cudnn-cu12")
 extras["torch"] = deps_list("nvidia-cudnn-cu12")
 
 extras["tokenizer"] = deps_list("sentencepiece")
+
+extras["model_monkey"] = deps_list("einops", "timm", "flash-attn")
 
 print(extras)
 

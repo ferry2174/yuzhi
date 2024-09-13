@@ -7,18 +7,16 @@ import warnings
 from typing import List, Optional, Tuple, Union
 
 import torch.utils.checkpoint
-import transformers
+from configuration_internvl_chat import InternVLChatConfig
+from conversation import get_conv_template
+from modeling_intern_vit import InternVisionModel
+from modeling_internlm2 import InternLM2ForCausalLM
 from torch import nn
 from torch.nn import CrossEntropyLoss
-from transformers import GenerationConfig, LlamaForCausalLM
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.utils import ModelOutput
 
-from .... import PreTrainedModel, logging
-from .configuration_internvl_chat import InternVLChatConfig
-from .conversation import get_conv_template
-from .modeling_intern_vit import InternVisionModel
-from .modeling_internlm2 import InternLM2ForCausalLM
+import yuzhi
+from yuzhi import GenerationConfig, PreTrainedModel, logging
+from yuzhi.model import CausalLMOutputWithPast
 
 
 logger = logging.get_logger(__name__)
@@ -41,7 +39,8 @@ class MiniMonkeyChatModel(PreTrainedModel):
     def __init__(self, config: InternVLChatConfig, vision_model=None, language_model=None):
         super().__init__(config)
 
-        assert version_cmp(transformers.__version__, '4.36.2', 'ge')
+        # assert version_cmp(transformers.__version__, '4.36.2', 'ge')
+        assert version_cmp(yuzhi.__version__, '0.0.1', 'ge')
         image_size = config.force_image_size or config.vision_config.image_size
         patch_size = config.vision_config.patch_size
         self.patch_size = patch_size
@@ -60,9 +59,10 @@ class MiniMonkeyChatModel(PreTrainedModel):
         if language_model is not None:
             self.language_model = language_model
         else:
-            if config.llm_config.architectures[0] == 'LlamaForCausalLM':
-                self.language_model = LlamaForCausalLM(config.llm_config)
-            elif config.llm_config.architectures[0] == 'InternLM2ForCausalLM':
+#             if config.llm_config.architectures[0] == 'LlamaForCausalLM':
+#                 self.language_model = LlamaForCausalLM(config.llm_config)
+#             elif config.llm_config.architectures[0] == 'InternLM2ForCausalLM':
+            if config.llm_config.architectures[0] == 'InternLM2ForCausalLM':
                 self.language_model = InternLM2ForCausalLM(config.llm_config)
             else:
                 raise NotImplementedError(f'{config.llm_config.architectures[0]} is not implemented.')

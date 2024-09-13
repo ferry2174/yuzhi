@@ -418,6 +418,10 @@ class PretrainedConfig(PushToHubMixin):
         Returns:
             [`PretrainedConfig`]: The configuration object instantiated from those parameters.
         """
+        return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
+        kwargs.pop("_from_auto", None)
+        kwargs.pop("_from_pipeline", None)
+
         config = cls(**config_dict)
 
         for key, value in kwargs.items():
@@ -427,6 +431,10 @@ class PretrainedConfig(PushToHubMixin):
                 if isinstance(current_attr, PretrainedConfig) and isinstance(value, dict):
                     value = current_attr.__class__(**value)
                 setattr(config, key, value)
+                kwargs.pop(key, None)
 
         logger.info(f"Model config {config}")
-        return config
+        if return_unused_kwargs:
+            return config, kwargs
+        else:
+            return config

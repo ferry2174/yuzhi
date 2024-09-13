@@ -160,3 +160,15 @@ def to_py_obj(obj):
         return obj.tolist()
     else:
         return obj
+
+def is_tensor(x):
+    """
+    Tests if `x` is a `torch.Tensor`, `tf.Tensor`, `jaxlib.xla_extension.DeviceArray`, `np.ndarray` or `mlx.array`
+    in the order defined by `infer_framework_from_repr`
+    """
+    # This gives us a smart order to test the frameworks with the corresponding tests.
+    framework_to_test_func = _get_frameworks_and_test_func(x)
+    for test_func in framework_to_test_func.values():
+        if test_func(x):
+            return True
+    return False

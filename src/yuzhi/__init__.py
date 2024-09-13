@@ -15,6 +15,7 @@ logger = logging.get_logger(__name__)
 
 # Base objects, independent of any specific backend
 _import_structure = {
+    "model.generation": ["activations"],
     "model": [
         "PretrainedConfig",
         "GenerationConfig",
@@ -22,9 +23,11 @@ _import_structure = {
         "PreTrainedTokenizer",
     ],
     "utils" : [
+        "get_torch_version",
         "is_bitsandbytes_available",
         "is_torch_available",
         "is_oneflow_available",
+        "is_tensor",
         "logging"
     ],
 }
@@ -54,16 +57,22 @@ else:
 # Base objects, independent of any specific backend
 if TYPE_CHECKING:
     from .model import (
+        BaseModelOutput,
+        BaseModelOutputWithPooling,
+
         GenerationConfig,
         PretrainedConfig,
         PreTrainedModel,
         PreTrainedTokenizer,
     )
+    from .model import activations
     from .utils import (
         OptionalDependencyNotAvailable,
         _LazyModule,
+        get_torch_version,
         is_bitsandbytes_available,
         is_oneflow_available,
+        is_tensor,
         is_torch_available,
         logging,
     )

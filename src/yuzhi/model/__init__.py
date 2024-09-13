@@ -22,8 +22,15 @@ _import_structure = {
     "tokenizers": [
         "PreTrainedTokenizer",
     ],
-    "models": [
+    "modeling": [
         "PreTrainedModel",
+    ],
+    "modeling_outputs": [
+        "BaseModelOutput",
+        "BaseModelOutputWithPooling",
+        "BaseModelOutputWithPast",
+        "CausalLMOutputWithPast",
+        "SequenceClassifierOutputWithPast",
     ]
 }
 
@@ -50,6 +57,7 @@ if TYPE_CHECKING:
     from ..utils import (
         OptionalDependencyNotAvailable,
         _LazyModule,
+        get_torch_version,
         is_oneflow_available,
         is_torch_available,
         logging,
@@ -60,8 +68,15 @@ if TYPE_CHECKING:
     from .generation import (
         GenerationConfig,
     )
-    from .models import (
+    from .modeling import (
         PreTrainedModel,
+    )
+    from .modeling_outputs import (
+        BaseModelOutput,
+        BaseModelOutputWithPast,
+        BaseModelOutputWithPooling,
+        CausalLMOutputWithPast,
+        SequenceClassifierOutputWithPast,
     )
     from .tokenizers import (
         PreTrainedTokenizer,

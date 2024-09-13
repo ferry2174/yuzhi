@@ -26,27 +26,28 @@ import torch.utils.checkpoint
 from einops import rearrange
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-from transformers.activations import ACT2FN
-from transformers.modeling_outputs import (
+
+from yuzhi import PreTrainedModel, logging
+from yuzhi.model import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
     SequenceClassifierOutputWithPast,
+    activations,
 )
-from transformers.utils import (
+from yuzhi.utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     replace_return_docstrings,
 )
 
-from .... import PreTrainedModel, logging
-
 
 try:
-    from transformers.generation.streamers import BaseStreamer
+    from yuzhi.model.generation.streamers import BaseStreamer
 except:  # noqa # pylint: disable=bare-except
     BaseStreamer = None
 
-from .configuration_internlm2 import InternLM2Config
+from configuration_internlm2 import InternLM2Config  # type: ignore
+
 
 logger = logging.get_logger(__name__)
 
@@ -262,7 +263,7 @@ class InternLM2MLP(nn.Module):
         self.w1 = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.w3 = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.w2 = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = ACT2FN[config.hidden_act]
+        self.act_fn = activations.ACT2FN[config.hidden_act]
 
     def forward(self, x):
         down_proj = self.w2(self.act_fn(self.w1(x)) * self.w3(x))

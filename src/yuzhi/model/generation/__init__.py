@@ -13,7 +13,7 @@ logger = logging.get_logger(__name__)
 
 # Base objects, independent of any specific backend
 _import_structure = {
-    "configuration_utils": [
+    "configuration": [
         "GenerationConfig"
     ],
 }

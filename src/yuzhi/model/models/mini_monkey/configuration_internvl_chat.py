@@ -6,11 +6,11 @@
 
 import copy
 
-from transformers import AutoConfig, LlamaConfig
+from configuration_intern_vit import InternVisionConfig  # type: ignore
+from configuration_internlm2 import InternLM2Config  # type: ignore
 
-from .... import PretrainedConfig, logging
-from .configuration_intern_vit import InternVisionConfig
-from .configuration_internlm2 import InternLM2Config
+#from transformers import AutoConfig, LlamaConfig
+from yuzhi import PretrainedConfig, logging
 
 
 logger = logging.get_logger(__name__)
@@ -48,9 +48,9 @@ class InternVLChatConfig(PretrainedConfig):
             logger.info('llm_config is None. Initializing the LlamaConfig config with default values (`LlamaConfig`).')
 
         self.vision_config = InternVisionConfig(**vision_config)
-        if llm_config['architectures'][0] == 'LlamaForCausalLM':
-            self.llm_config = LlamaConfig(**llm_config)
-        elif llm_config['architectures'][0] == 'InternLM2ForCausalLM':
+        # if llm_config['architectures'][0] == 'LlamaForCausalLM':
+        #     self.llm_config = LlamaConfig(**llm_config)
+        if llm_config['architectures'][0] == 'InternLM2ForCausalLM':
             self.llm_config = InternLM2Config(**llm_config)
         else:
             raise ValueError('Unsupported architecture: {}'.format(llm_config['architectures'][0]))

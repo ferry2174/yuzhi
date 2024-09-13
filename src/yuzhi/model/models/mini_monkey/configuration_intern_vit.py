@@ -6,7 +6,7 @@
 import os
 from typing import Union
 
-from .... import PretrainedConfig, logging
+from yuzhi import PretrainedConfig, logging
 
 
 logger = logging.get_logger(__name__)

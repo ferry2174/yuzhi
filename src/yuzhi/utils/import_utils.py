@@ -97,6 +97,9 @@ def is_safetensors_available():
 def is_tokenizers_available():
     return _tokenizers_available
 
+def get_torch_version():
+    return _torch_version
+
 # docstyle-ignore
 PYTORCH_IMPORT_ERROR = """
 {0} requires the PyTorch library but it was not found in your environment. Checkout the instructions on the
