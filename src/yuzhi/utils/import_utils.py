@@ -5,9 +5,12 @@ import importlib.metadata
 import importlib.util
 import os
 from collections import OrderedDict
+from functools import lru_cache
 from itertools import chain
 from types import ModuleType
 from typing import Any, Tuple, Union
+
+from packaging import version
 
 from . import logging
 
@@ -52,6 +55,9 @@ ENV_VARS_TRUE_AND_AUTO_VALUES = ENV_VARS_TRUE_VALUES.union({"AUTO"})
 USE_TORCH = os.environ.get("USE_TORCH", "AUTO").upper()
 USE_ONEFLOW = os.environ.get("USE_ONEFLOW", "AUTO").upper()
 
+# Try to run a native pytorch job in an environment with TorchXLA installed by setting this value to 0.
+USE_TORCH_XLA = os.environ.get("USE_TORCH_XLA", "1").upper()
+
 FORCE_ONEFLOW_AVAILABLE = os.environ.get("FORCE_ONEFLOW_AVAILABLE", "AUTO").upper()
 
 _bitsandbytes_available = _is_package_available("bitsandbytes")
@@ -65,6 +71,12 @@ if USE_TORCH in ENV_VARS_TRUE_AND_AUTO_VALUES and USE_ONEFLOW not in ENV_VARS_TR
 else:
     logger.info("Disabling PyTorch because USE_ONEFLOW is set")
     _torch_available = False
+
+_torch_xla_available = False
+if USE_TORCH_XLA in ENV_VARS_TRUE_VALUES:
+    _torch_xla_available, _torch_xla_version = _is_package_available("torch_xla", return_version=True)
+    if _torch_xla_available:
+        logger.info(f"Torch XLA version {_torch_xla_version} available.")
 
 _of_version = "N/A"
 _of_available = False
@@ -99,6 +111,24 @@ def is_tokenizers_available():
 
 def get_torch_version():
     return _torch_version
+
+@lru_cache
+def is_torch_xla_available(check_is_tpu=False, check_is_gpu=False):
+    """
+    Check if `torch_xla` is available. To train a native pytorch job in an environment with torch xla installed, set
+    the USE_TORCH_XLA to false.
+    """
+    assert not (check_is_tpu and check_is_gpu), "The check_is_tpu and check_is_gpu cannot both be true."
+
+    if not _torch_xla_available:
+        return False
+
+    import torch_xla
+
+    if check_is_gpu:
+        return torch_xla.runtime.device_type() in ["GPU", "CUDA"]
+
+    return True
 
 # docstyle-ignore
 PYTORCH_IMPORT_ERROR = """
@@ -205,3 +235,19 @@ class _LazyModule(ModuleType):
 
 class OptionalDependencyNotAvailable(BaseException):
     """Internally used error class for signalling an optional dependency was not found."""
+
+def is_torchdynamo_compiling():
+    if not is_torch_available():
+        return False
+    try:
+        # Importing torch._dynamo causes issues with PyTorch profiler (https://github.com/pytorch/pytorch/issues/130622) hence rather relying on `torch.compiler.is_compiling()` when possible.
+        if version.parse(_torch_version) >= version.parse("2.3.0"):
+            import torch
+
+            return torch.compiler.is_compiling()
+        else:
+            import torch._dynamo as dynamo  # noqa: F401
+
+            return dynamo.is_compiling()
+    except Exception:
+        return False

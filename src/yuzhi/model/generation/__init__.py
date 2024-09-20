@@ -16,6 +16,9 @@ _import_structure = {
     "configuration": [
         "GenerationConfig"
     ],
+    "base_generation": [
+        "GenerationMixin"
+    ],
 }
 
 try:
@@ -44,6 +47,9 @@ if TYPE_CHECKING:
         is_oneflow_available,
         is_torch_available,
         logging,
+    )
+    from .base_generation import (
+        GenerationMixin,
     )
     from .configuration import (
         GenerationConfig,

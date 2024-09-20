@@ -20,6 +20,7 @@ from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import sentencepiece as spm
+
 from yuzhi import PreTrainedTokenizer, logging
 
 

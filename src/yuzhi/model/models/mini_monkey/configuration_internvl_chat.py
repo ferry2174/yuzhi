@@ -6,11 +6,11 @@
 
 import copy
 
-from configuration_intern_vit import InternVisionConfig  # type: ignore
-from configuration_internlm2 import InternLM2Config  # type: ignore
-
 #from transformers import AutoConfig, LlamaConfig
 from yuzhi import PretrainedConfig, logging
+
+from .configuration_intern_vit import InternVisionConfig  # type: ignore
+from .configuration_internlm2 import InternLM2Config  # type: ignore
 
 
 logger = logging.get_logger(__name__)

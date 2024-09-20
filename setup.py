@@ -38,6 +38,7 @@ _deps = [
     "einops==0.8.0",
     "timm==0.9.16",
     "flash-attn==2.5.8",
+    "torch_xla==2.4.0",
 ]
 
 deps = {b: a for a, b in (re.findall(r"^(([^!=<>~ ]+)(?:[!=<>~ ].*)?$)", x)[0] for x in _deps)}
@@ -87,7 +88,7 @@ extras["quantization"] = deps_list("bitsandbytes")
 
 extras["oneflow"] = deps_list("oneflow", "nvidia-cudnn-cu12")
 
-extras["torch"] = deps_list("nvidia-cudnn-cu12")
+extras["torch"] = deps_list("nvidia-cudnn-cu12", "torch_xla")
 
 extras["tokenizer"] = deps_list("sentencepiece")
 

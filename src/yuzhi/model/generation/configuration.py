@@ -24,16 +24,16 @@ class GenerationMode(ExplicitEnum):
     """
 
     # Non-beam methods
-    CONTRASTIVE_SEARCH = "contrastive_search"
+#    CONTRASTIVE_SEARCH = "contrastive_search"
     GREEDY_SEARCH = "greedy_search"
     SAMPLE = "sample"
-    ASSISTED_GENERATION = "assisted_generation"
-    DOLA_GENERATION = "dola_generation"
-    # Beam methods
-    BEAM_SEARCH = "beam_search"
-    BEAM_SAMPLE = "beam_sample"
-    CONSTRAINED_BEAM_SEARCH = "constrained_beam_search"
-    GROUP_BEAM_SEARCH = "group_beam_search"
+#     ASSISTED_GENERATION = "assisted_generation"
+#     DOLA_GENERATION = "dola_generation"
+#     # Beam methods
+#     BEAM_SEARCH = "beam_search"
+#     BEAM_SAMPLE = "beam_sample"
+#     CONSTRAINED_BEAM_SEARCH = "constrained_beam_search"
+#     GROUP_BEAM_SEARCH = "group_beam_search"
 
 class GenerationConfig(PushToHubMixin):
     # no-format
@@ -847,6 +847,32 @@ class GenerationConfig(PushToHubMixin):
         # Remove all the attributes that were updated, without modifying the input dict
         unused_kwargs = {key: value for key, value in kwargs.items() if key not in to_remove}
         return unused_kwargs
+
+    def get_generation_mode(self) -> GenerationMode:
+        """
+        Returns the generation mode triggered by the [`GenerationConfig`] instance.
+
+        Arg:
+            assistant_model (`PreTrainedModel`, *optional*):
+                The assistant model to be used for assisted generation. If set, the generation mode will be
+                assisted generation.
+
+        Returns:
+            `GenerationMode`: The generation mode triggered by the instance.
+        """
+        if self.do_sample is False:
+            if (
+                self.top_k is not None
+                and self.top_k > 1
+                and self.penalty_alpha is not None
+                and self.penalty_alpha > 0
+            ):
+                generation_mode = GenerationMode.CONTRASTIVE_SEARCH
+            else:
+                generation_mode = GenerationMode.GREEDY_SEARCH
+        else:
+            generation_mode = GenerationMode.SAMPLE
+        return generation_mode
 
 
 @dataclass

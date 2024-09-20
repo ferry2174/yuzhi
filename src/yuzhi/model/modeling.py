@@ -4,30 +4,35 @@ import gc
 import json
 import os
 import shutil
-import tempfile
+import warnings
 from contextlib import contextmanager
-from typing import Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from zipfile import is_zipfile
 
 import torch
 from packaging import version
-from torch import nn
+from torch import Tensor, nn
 
 from ..utils import (
+    ENV_VARS_TRUE_VALUES,
     SAFETENSORS_WEIGHTS_INDEX_NAME,
     SAFETENSORS_WEIGHTS_NAME,
     WEIGHTS_INDEX_NAME,
     WEIGHTS_NAME,
     ContextManagers,
     PushToHubMixin,
+    is_bitsandbytes_available,
     is_safetensors_available,
     is_torch_greater_or_equal_than_1_13,
+    is_torch_xla_available,
     logging,
 )
 from .configurations import PretrainedConfig
-from .generation import GenerationConfig
+from .generation import GenerationConfig, GenerationMixin
 
 
+XLA_USE_BF16 = os.environ.get("XLA_USE_BF16", "0").upper()
+XLA_DOWNCAST_BF16 = os.environ.get("XLA_DOWNCAST_BF16", "0").upper()
 PARAM_RENAME_WARNING = "A parameter name that contains `{}` will be renamed internally to `{}`. Please use a different name to suppress this warning."
 
 if is_safetensors_available():
@@ -301,7 +306,379 @@ def save_offload_index(index, offload_folder):
     with open(offload_index_file, "w", encoding="utf-8") as f:
         json.dump(current_index, f, indent=2)
 
-class PreTrainedModel(nn.Module, PushToHubMixin):
+def get_parameter_device(parameter: Union[nn.Module, GenerationMixin, "ModuleUtilsMixin"]):
+    try:
+        return next(parameter.parameters()).device
+    except StopIteration:
+        # For nn.DataParallel compatibility in PyTorch 1.5
+
+        def find_tensor_attributes(module: nn.Module) -> List[Tuple[str, Tensor]]:
+            tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
+            return tuples
+
+        gen = parameter._named_members(get_members_fn=find_tensor_attributes)
+        first_tuple = next(gen)
+        return first_tuple[1].device
+
+def get_parameter_dtype(parameter: Union[nn.Module, GenerationMixin, "ModuleUtilsMixin"]):
+    """
+    Returns the first found floating dtype in parameters if there is one, otherwise returns the last dtype it found.
+    """
+    last_dtype = None
+    for t in parameter.parameters():
+        last_dtype = t.dtype
+        if t.is_floating_point():
+            # Adding fix for https://github.com/pytorch/xla/issues/4152
+            # Fixes issue where the model code passes a value that is out of range for XLA_USE_BF16=1
+            # and XLA_DOWNCAST_BF16=1 so the conversion would cast it to -inf
+            # NOTE: `is_torch_xla_available()` is checked last as it induces a graph break in torch dynamo
+            if XLA_USE_BF16 in ENV_VARS_TRUE_VALUES and is_torch_xla_available():
+                return torch.bfloat16
+            if XLA_DOWNCAST_BF16 in ENV_VARS_TRUE_VALUES and is_torch_xla_available():
+                if t.dtype == torch.float:
+                    return torch.bfloat16
+                if t.dtype == torch.double:
+                    return torch.float32
+            return t.dtype
+
+    if last_dtype is not None:
+        # if no floating dtype was found return whatever the first dtype is
+        return last_dtype
+
+    # For nn.DataParallel compatibility in PyTorch > 1.5
+    def find_tensor_attributes(module: nn.Module) -> List[Tuple[str, Tensor]]:
+        tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
+        return tuples
+
+    gen = parameter._named_members(get_members_fn=find_tensor_attributes)
+    last_tuple = None
+    for tuple in gen:
+        last_tuple = tuple
+        if tuple[1].is_floating_point():
+            return tuple[1].dtype
+
+    if last_tuple is not None:
+        # fallback to the last dtype
+        return last_tuple[1].dtype
+
+    # fallback to buffer dtype
+    for t in parameter.buffers():
+        last_dtype = t.dtype
+        if t.is_floating_point():
+            return t.dtype
+    return last_dtype
+
+class ModuleUtilsMixin:
+    """
+    A few utilities for `torch.nn.Modules`, to be used as a mixin.
+    """
+
+    @staticmethod
+    def _hook_rss_memory_pre_forward(module, *args, **kwargs):
+        try:
+            import psutil
+        except ImportError:
+            raise ImportError("You need to install psutil (pip install psutil) to use memory tracing.")
+
+        process = psutil.Process(os.getpid())
+        mem = process.memory_info()
+        module.mem_rss_pre_forward = mem.rss
+        return None
+
+    @staticmethod
+    def _hook_rss_memory_post_forward(module, *args, **kwargs):
+        try:
+            import psutil
+        except ImportError:
+            raise ImportError("You need to install psutil (pip install psutil) to use memory tracing.")
+
+        process = psutil.Process(os.getpid())
+        mem = process.memory_info()
+        module.mem_rss_post_forward = mem.rss
+        mem_rss_diff = module.mem_rss_post_forward - module.mem_rss_pre_forward
+        module.mem_rss_diff = mem_rss_diff + (module.mem_rss_diff if hasattr(module, "mem_rss_diff") else 0)
+        return None
+
+    def add_memory_hooks(self):
+        """
+        Add a memory hook before and after each sub-module forward pass to record increase in memory consumption.
+
+        Increase in memory consumption is stored in a `mem_rss_diff` attribute for each module and can be reset to zero
+        with `model.reset_memory_hooks_state()`.
+        """
+        for module in self.modules():
+            module.register_forward_pre_hook(self._hook_rss_memory_pre_forward)
+            module.register_forward_hook(self._hook_rss_memory_post_forward)
+        self.reset_memory_hooks_state()
+
+    def reset_memory_hooks_state(self):
+        """
+        Reset the `mem_rss_diff` attribute of each module (see [`~modeling_utils.ModuleUtilsMixin.add_memory_hooks`]).
+        """
+        for module in self.modules():
+            module.mem_rss_diff = 0
+            module.mem_rss_post_forward = 0
+            module.mem_rss_pre_forward = 0
+
+    @property
+    def device(self) -> torch.device:
+        """
+        `torch.device`: The device on which the module is (assuming that all the module parameters are on the same
+        device).
+        """
+        return get_parameter_device(self)
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """
+        `torch.dtype`: The dtype of the module (assuming that all the module parameters have the same dtype).
+        """
+        return get_parameter_dtype(self)
+
+    def invert_attention_mask(self, encoder_attention_mask: Tensor) -> Tensor:
+        """
+        Invert an attention mask (e.g., switches 0. and 1.).
+
+        Args:
+            encoder_attention_mask (`torch.Tensor`): An attention mask.
+
+        Returns:
+            `torch.Tensor`: The inverted attention mask.
+        """
+        if encoder_attention_mask.dim() == 3:
+            encoder_extended_attention_mask = encoder_attention_mask[:, None, :, :]
+        if encoder_attention_mask.dim() == 2:
+            encoder_extended_attention_mask = encoder_attention_mask[:, None, None, :]
+        # T5 has a mask that can compare sequence ids, we can simulate this here with this transposition
+        # Cf. https://github.com/tensorflow/mesh/blob/8d2465e9bc93129b913b5ccc6a59aa97abd96ec6/mesh_tensorflow
+        # /transformer/transformer_layers.py#L270
+        # encoder_extended_attention_mask = (encoder_extended_attention_mask ==
+        # encoder_extended_attention_mask.transpose(-1, -2))
+        encoder_extended_attention_mask = encoder_extended_attention_mask.to(dtype=self.dtype)  # fp16 compatibility
+        encoder_extended_attention_mask = (1.0 - encoder_extended_attention_mask) * torch.finfo(self.dtype).min
+
+        return encoder_extended_attention_mask
+
+    @staticmethod
+    def create_extended_attention_mask_for_decoder(input_shape, attention_mask, device=None):
+        if device is not None:
+            warnings.warn(
+                "The `device` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+            )
+        else:
+            device = attention_mask.device
+        batch_size, seq_length = input_shape
+        seq_ids = torch.arange(seq_length, device=device)
+        causal_mask = seq_ids[None, None, :].repeat(batch_size, seq_length, 1) <= seq_ids[None, :, None]
+        # in case past_key_values are used we need to add a prefix ones mask to the causal mask
+        # causal and attention masks must have same type with pytorch version < 1.3
+        causal_mask = causal_mask.to(attention_mask.dtype)
+
+        if causal_mask.shape[1] < attention_mask.shape[1]:
+            prefix_seq_len = attention_mask.shape[1] - causal_mask.shape[1]
+            causal_mask = torch.cat(
+                [
+                    torch.ones((batch_size, seq_length, prefix_seq_len), device=device, dtype=causal_mask.dtype),
+                    causal_mask,
+                ],
+                axis=-1,
+            )
+
+        extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
+        return extended_attention_mask
+
+    def get_extended_attention_mask(
+        self, attention_mask: Tensor, input_shape: Tuple[int], device: torch.device = None, dtype: torch.float = None
+    ) -> Tensor:
+        """
+        Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
+
+        Arguments:
+            attention_mask (`torch.Tensor`):
+                Mask with ones indicating tokens to attend to, zeros for tokens to ignore.
+            input_shape (`Tuple[int]`):
+                The shape of the input to the model.
+
+        Returns:
+            `torch.Tensor` The extended attention mask, with a the same dtype as `attention_mask.dtype`.
+        """
+        if dtype is None:
+            dtype = self.dtype
+
+        if not (attention_mask.dim() == 2 and self.config.is_decoder):
+            # show warning only if it won't be shown in `create_extended_attention_mask_for_decoder`
+            if device is not None:
+                warnings.warn(
+                    "The `device` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+                )
+        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
+        # ourselves in which case we just need to make it broadcastable to all heads.
+        if attention_mask.dim() == 3:
+            extended_attention_mask = attention_mask[:, None, :, :]
+        elif attention_mask.dim() == 2:
+            # Provided a padding mask of dimensions [batch_size, seq_length]
+            # - if the model is a decoder, apply a causal mask in addition to the padding mask
+            # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
+            if self.config.is_decoder:
+                extended_attention_mask = ModuleUtilsMixin.create_extended_attention_mask_for_decoder(
+                    input_shape, attention_mask, device
+                )
+            else:
+                extended_attention_mask = attention_mask[:, None, None, :]
+        else:
+            raise ValueError(
+                f"Wrong shape for input_ids (shape {input_shape}) or attention_mask (shape {attention_mask.shape})"
+            )
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and the dtype's smallest value for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.to(dtype=dtype)  # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(dtype).min
+        return extended_attention_mask
+
+    def get_head_mask(
+        self, head_mask: Optional[Tensor], num_hidden_layers: int, is_attention_chunked: bool = False
+    ) -> Tensor:
+        """
+        Prepare the head mask if needed.
+
+        Args:
+            head_mask (`torch.Tensor` with shape `[num_heads]` or `[num_hidden_layers x num_heads]`, *optional*):
+                The mask indicating if we should keep the heads or not (1.0 for keep, 0.0 for discard).
+            num_hidden_layers (`int`):
+                The number of hidden layers in the model.
+            is_attention_chunked (`bool`, *optional*, defaults to `False`):
+                Whether or not the attentions scores are computed by chunks or not.
+
+        Returns:
+            `torch.Tensor` with shape `[num_hidden_layers x batch x num_heads x seq_length x seq_length]` or list with
+            `[None]` for each layer.
+        """
+        if head_mask is not None:
+            head_mask = self._convert_head_mask_to_5d(head_mask, num_hidden_layers)
+            if is_attention_chunked is True:
+                head_mask = head_mask.unsqueeze(-1)
+        else:
+            head_mask = [None] * num_hidden_layers
+
+        return head_mask
+
+    def _convert_head_mask_to_5d(self, head_mask, num_hidden_layers):
+        """-> [num_hidden_layers x batch x num_heads x seq_length x seq_length]"""
+        if head_mask.dim() == 1:
+            head_mask = head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            head_mask = head_mask.expand(num_hidden_layers, -1, -1, -1, -1)
+        elif head_mask.dim() == 2:
+            head_mask = head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)  # We can specify head_mask for each layer
+        assert head_mask.dim() == 5, f"head_mask.dim != 5, instead {head_mask.dim()}"
+        head_mask = head_mask.to(dtype=self.dtype)  # switch to float if need + fp16 compatibility
+        return head_mask
+
+    def num_parameters(self, only_trainable: bool = False, exclude_embeddings: bool = False) -> int:
+        """
+        Get number of (optionally, trainable or non-embeddings) parameters in the module.
+
+        Args:
+            only_trainable (`bool`, *optional*, defaults to `False`):
+                Whether or not to return only the number of trainable parameters
+
+            exclude_embeddings (`bool`, *optional*, defaults to `False`):
+                Whether or not to return only the number of non-embeddings parameters
+
+        Returns:
+            `int`: The number of parameters.
+        """
+
+        if exclude_embeddings:
+            embedding_param_names = [
+                f"{name}.weight" for name, module_type in self.named_modules() if isinstance(module_type, nn.Embedding)
+            ]
+            total_parameters = [
+                parameter for name, parameter in self.named_parameters() if name not in embedding_param_names
+            ]
+        else:
+            total_parameters = list(self.parameters())
+
+        total_numel = []
+        is_loaded_in_4bit = getattr(self, "is_loaded_in_4bit", False)
+
+        if is_loaded_in_4bit:
+            if is_bitsandbytes_available():
+                import bitsandbytes as bnb
+            else:
+                raise ValueError(
+                    "bitsandbytes is not installed but it seems that the model has been loaded in 4bit precision, something went wrong"
+                    " make sure to install bitsandbytes with `pip install bitsandbytes`. You also need a GPU. "
+                )
+
+        for param in total_parameters:
+            if param.requires_grad or not only_trainable:
+                # For 4bit models, we need to multiply the number of parameters by 2 as half of the parameters are
+                # used for the 4bit quantization (uint8 tensors are stored)
+                if is_loaded_in_4bit and isinstance(param, bnb.nn.Params4bit):
+                    if hasattr(param, "element_size"):
+                        num_bytes = param.element_size()
+                    elif hasattr(param, "quant_storage"):
+                        num_bytes = param.quant_storage.itemsize
+                    else:
+                        num_bytes = 1
+                    total_numel.append(param.numel() * 2 * num_bytes)
+                else:
+                    total_numel.append(param.numel())
+
+        return sum(total_numel)
+
+    def estimate_tokens(self, input_dict: Dict[str, Union[torch.Tensor, Any]]) -> int:
+        """
+        Helper function to estimate the total number of tokens from the model inputs.
+
+        Args:
+            inputs (`dict`): The model inputs.
+
+        Returns:
+            `int`: The total number of tokens.
+        """
+        if not hasattr(self, "warnings_issued"):
+            self.warnings_issued = {}
+        if self.main_input_name in input_dict:
+            return input_dict[self.main_input_name].numel()
+        elif "estimate_tokens" not in self.warnings_issued:
+            logger.warning(
+                "Could not estimate the number of tokens of the input, floating-point operations will not be computed"
+            )
+            self.warnings_issued["estimate_tokens"] = True
+        return 0
+
+    def floating_point_ops(
+        self, input_dict: Dict[str, Union[torch.Tensor, Any]], exclude_embeddings: bool = True
+    ) -> int:
+        """
+        Get number of (optionally, non-embeddings) floating-point operations for the forward and backward passes of a
+        batch with this transformer model. Default approximation neglects the quadratic dependency on the number of
+        tokens (valid if `12 * d_model << sequence_length`) as laid out in [this
+        paper](https://arxiv.org/pdf/2001.08361.pdf) section 2.1. Should be overridden for transformers with parameter
+        re-use e.g. Albert or Universal Transformers, or if doing long-range modeling with very high sequence lengths.
+
+        Args:
+            batch_size (`int`):
+                The batch size for the forward pass.
+
+            sequence_length (`int`):
+                The number of tokens in each line of the batch.
+
+            exclude_embeddings (`bool`, *optional*, defaults to `True`):
+                Whether or not to count embedding and softmax operations.
+
+        Returns:
+            `int`: The number of floating-point operations.
+        """
+
+        return 6 * self.estimate_tokens(input_dict) * self.num_parameters(exclude_embeddings=exclude_embeddings)
+
+class PreTrainedModel(nn.Module, PushToHubMixin, GenerationMixin, ModuleUtilsMixin):
     r"""
     Base class for all models.
 
@@ -606,7 +983,6 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
         device_map = kwargs.pop("device_map", None)
         offload_folder = kwargs.pop("offload_folder", None)
         offload_state_dict = kwargs.pop("offload_state_dict", False)
-        offload_buffers = kwargs.pop("offload_buffers", False)
         subfolder = kwargs.pop("subfolder", "")
         variant = kwargs.pop("variant", None)
         output_loading_info = kwargs.pop("output_loading_info", False)
@@ -1214,3 +1590,16 @@ class PreTrainedModel(nn.Module, PushToHubMixin):
             if hasattr(module, "_tie_weights"):
                 module._tie_weights()
 
+    @classmethod
+    def can_generate(cls) -> bool:
+        """
+        Returns whether this model can generate sequences with `.generate()`.
+
+        Returns:
+            `bool`: Whether this model can generate sequences with `.generate()`.
+        """
+        # Detects whether `prepare_inputs_for_generation` has been overwritten, which is a requirement for generation.
+        # Alternativelly, the model can also have a custom `generate` function.
+        if "GenerationMixin" in str(cls.prepare_inputs_for_generation) and "GenerationMixin" in str(cls.generate):
+            return False
+        return True

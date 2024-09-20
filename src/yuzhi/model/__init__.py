@@ -20,6 +20,7 @@ _import_structure = {
         "GenerationConfig",
     ],
     "tokenizers": [
+        "PreTrainedTokenizerBase",
         "PreTrainedTokenizer",
     ],
     "modeling": [
@@ -31,6 +32,10 @@ _import_structure = {
         "BaseModelOutputWithPast",
         "CausalLMOutputWithPast",
         "SequenceClassifierOutputWithPast",
+    ],
+    "models.mini_monkey": [
+        "MiniMonkeyChatModel",
+        "InternLM2Tokenizer",
     ]
 }
 
@@ -78,8 +83,13 @@ if TYPE_CHECKING:
         CausalLMOutputWithPast,
         SequenceClassifierOutputWithPast,
     )
+    from .models.mini_monkey import (
+        InternLM2Tokenizer,
+        MiniMonkeyChatModel,
+    )
     from .tokenizers import (
         PreTrainedTokenizer,
+        PreTrainedTokenizerBase,
     )
 
     try:

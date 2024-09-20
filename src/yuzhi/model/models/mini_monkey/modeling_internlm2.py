@@ -46,7 +46,7 @@ try:
 except:  # noqa # pylint: disable=bare-except
     BaseStreamer = None
 
-from configuration_internlm2 import InternLM2Config  # type: ignore
+from .configuration_internlm2 import InternLM2Config  # type: ignore
 
 
 logger = logging.get_logger(__name__)

@@ -8,13 +8,14 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
-from configuration_intern_vit import InternVisionConfig
 from einops import rearrange
 from timm.models.layers import DropPath
 from torch import nn
 
 from yuzhi import PreTrainedModel, logging
 from yuzhi.model import BaseModelOutput, BaseModelOutputWithPooling, activations
+
+from .configuration_intern_vit import InternVisionConfig
 
 
 try:

@@ -7,16 +7,17 @@ import warnings
 from typing import List, Optional, Tuple, Union
 
 import torch.utils.checkpoint
-from configuration_internvl_chat import InternVLChatConfig
-from conversation import get_conv_template
-from modeling_intern_vit import InternVisionModel
-from modeling_internlm2 import InternLM2ForCausalLM
 from torch import nn
 from torch.nn import CrossEntropyLoss
 
 import yuzhi
 from yuzhi import GenerationConfig, PreTrainedModel, logging
 from yuzhi.model import CausalLMOutputWithPast
+
+from .configuration_internvl_chat import InternVLChatConfig
+from .conversation import get_conv_template
+from .modeling_intern_vit import InternVisionModel
+from .modeling_internlm2 import InternLM2ForCausalLM
 
 
 logger = logging.get_logger(__name__)
@@ -337,7 +338,7 @@ class MiniMonkeyChatModel(PreTrainedModel):
             input_embeds = self.language_model.get_input_embeddings()(input_ids)
 
         if use_scm:
-            self.language_model.model.img_idx = torch.where(selected==True)
+            self.language_model.model.img_idx = torch.where(selected is True)
             self.language_model.model.high_token = target_aspect_ratio[0]*target_aspect_ratio[1] * self.num_image_token
             batch_size, seq_length = input_embeds.shape[:2]
             device = input_embeds.device
@@ -356,7 +357,7 @@ class MiniMonkeyChatModel(PreTrainedModel):
                 output_attentions=False,
                 use_cache=False,
             )
-            
+
             tmp_layer_outputs2 = self.language_model.model.layers[1](
                 tmp_layer_outputs[0],
                 attention_mask=new_attention_mask,
@@ -377,7 +378,7 @@ class MiniMonkeyChatModel(PreTrainedModel):
             attention_mask = torch.ones(
                 (input_embeds.shape[0], input_embeds.shape[1]), dtype=torch.bool, device=device
             )
-        
+
         outputs = self.language_model.generate(
             inputs_embeds=input_embeds,
             attention_mask=attention_mask,

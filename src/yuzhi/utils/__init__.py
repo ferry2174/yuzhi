@@ -34,6 +34,8 @@ from .import_utils import (
     is_safetensors_available,
     is_tokenizers_available,
     is_torch_available,
+    is_torch_xla_available,
+    is_torchdynamo_compiling,
     requires_backends,
 )
 from .pytorch_utils import (
